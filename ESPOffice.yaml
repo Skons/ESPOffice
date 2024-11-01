@@ -1,0 +1,218 @@
+globals:
+  - id: lvgl_is_paused
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: screensaver_hordir
+    type: std::string
+    restore_value: no
+    initial_value: ''
+  - id: screensaver_verdir
+    type: std::string
+    restore_value: no
+    initial_value: ''
+  - id: screensaver_horspeed
+    type: int
+    restore_value: no
+    initial_value: '1'
+  - id: screensaver_verspeed
+    type: int
+    restore_value: no
+    initial_value: '1'
+  - id: screensaver_x
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: screensaver_y
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: screensaver_logo_color
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+image:
+  - file: images/esphome-256x256-default.png
+    id: screensaver_logo_default
+    resize: 100x100
+    type: RGB565
+    use_transparency: true
+  - file: images/esphome-256x256-red.png
+    id: screensaver_logo_red
+    resize: 100x100
+    type: RGB565
+    use_transparency: true
+  - file: images/esphome-256x256-green.png
+    id: screensaver_logo_green
+    resize: 100x100
+    type: RGB565
+    use_transparency: true
+  - file: images/esphome-256x256-blue.png
+    id: screensaver_logo_blue
+    resize: 100x100
+    type: RGB565
+    use_transparency: true
+
+number:
+  - platform: template
+    name: LVGL Screen timeout
+    optimistic: true
+    id: display_timeout_number
+    unit_of_measurement: "s"
+    initial_value: 45
+    restore_value: true
+    min_value: 10
+    max_value: 180
+    step: 5
+    mode: box
+
+lvgl:
+  on_idle:
+    - timeout: !lambda "return (id(display_timeout_number).state * 1000);"
+      then:
+        - logger.log: "LVGL is idle"
+        - lvgl.widget.show: screensaver_image
+        - lvgl.widget.redraw:
+        - delay: 1s
+        - light.turn_off: m5_backlight
+        - lvgl.pause:
+        - globals.set:
+            id: lvgl_is_paused
+            value: !lambda return true;
+        - script.execute:
+            id: screensaver_script
+  [...]
+  top_layer:
+    widgets:
+      - image:
+          id: screensaver_image
+          align: TOP_LEFT
+          src: screensaver_logo_default
+          hidden: true
+
+script:
+  - id: resume_lvgl
+    mode: restart
+    then:
+      - if:
+          condition:
+            or:
+              - lambda: return id(lvgl_is_paused);
+              - lvgl.is_paused:
+        then:
+          - logger.log: "LVGL resuming"
+          - globals.set:
+              id: lvgl_is_paused
+              value: !lambda return false;
+          - lvgl.widget.hide: screensaver_image
+          - light.turn_on:
+              id: m5_backlight
+              brightness: !lambda return (id(backlight_brightness_number).state / 100);
+          - lvgl.resume:
+          - lvgl.widget.redraw:
+
+  - id: screensaver_script
+    mode: single
+    then:
+      - while:
+          condition:
+            lambda: return id(lvgl_is_paused);
+          then:
+            - lambda: |-
+                int screenWidth = 240;
+                int screenHeight = 240;
+                int imgWidth=100;
+                int imgHeigth=100;
+                int maxSpeed = 5;
+                int minSpeed = 1;
+
+                int x = id(screensaver_x);
+                std::string current_hordir = id(screensaver_hordir);
+                bool updateHorSpeed = false;
+                if (strcmp(current_hordir.c_str(), "l") == 0) {
+                  x -= id(screensaver_horspeed);
+                  if (x < 0) {
+                    id(screensaver_hordir) = "r";
+                    x = 0;
+                    updateHorSpeed = true;
+                  }
+                }
+                else {
+                  x += id(screensaver_horspeed);
+                  if (x > (screenWidth-imgWidth)) {
+                    id(screensaver_hordir) = "l";
+                    x = screenWidth-imgWidth;
+                    updateHorSpeed = true;
+                  }
+                }
+
+                if (updateHorSpeed) { //update the speed thus angle
+                  id(screensaver_horspeed) = (rand() % maxSpeed) + minSpeed;//select pixels to move
+                  ESP_LOGD("screensaver_script", "Updating screensaver_horspeed with %i", id(screensaver_horspeed));
+                }
+                id(screensaver_x) = x; //set current x
+
+                int y = id(screensaver_y);
+                std::string current_verdir = id(screensaver_verdir);
+                bool updateVerSpeed = false;
+                if (strcmp(current_verdir.c_str(), "u") == 0) {
+                  y -= id(screensaver_verspeed);
+                  if (y < 0) {
+                    id(screensaver_verdir) = "d";
+                    y = 0;
+                    updateVerSpeed = true;
+                  }
+                }
+                else {
+                  y += id(screensaver_verspeed);
+                  if (y > (screenWidth-imgWidth)) {
+                    id(screensaver_verdir) = "u";
+                    y = screenWidth-imgWidth;
+                    updateVerSpeed = true;
+                  }
+                }
+
+                if (updateVerSpeed) {
+                  id(screensaver_verspeed) = (rand() % maxSpeed) + minSpeed; //select pixels to move
+                  ESP_LOGD("screensaver_script", "Updating screensaver_verspeed with %i", id(screensaver_verspeed));
+                }
+                id(screensaver_y) = y;
+                ESP_LOGD("screensaver_script", "Going for y %i and x %i", y, x);
+
+                if (updateVerSpeed || updateHorSpeed) {
+                  int newColor = 0;
+
+                  //make sure the color is new
+                  while (newColor == 0 || newColor == id(screensaver_logo_color)) {
+                    newColor = (rand() % 299) + 100;
+                    newColor = newColor / 100;
+                  }
+                  if (newColor == 1) {
+                    lv_img_set_src(screensaver_image, screensaver_logo_red->get_lv_img_dsc());
+                  }
+                  else if (newColor == 2) {
+                    lv_img_set_src(screensaver_image, screensaver_logo_green->get_lv_img_dsc());
+                  }
+                  else {
+                    lv_img_set_src(screensaver_image, screensaver_logo_blue->get_lv_img_dsc());
+                  }
+                  id(screensaver_logo_color) = newColor;
+                }
+            - lvgl.image.update:
+                id: screensaver_image
+                x: !lambda return id(screensaver_x);
+                y: !lambda return id(screensaver_y);
+            - lvgl.resume:
+            - lvgl.widget.redraw:
+            - delay: 5ms #give some time to allow for redraw
+            - lvgl.pause:
+            - delay: 100ms
+      - lvgl.widget.hide: screensaver_image
+
+# example
+touchscreen:
+  [...]
+  on_release:
+    - script.execute:
+        id: resume_lvgl
